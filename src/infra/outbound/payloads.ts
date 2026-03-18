@@ -5,10 +5,18 @@ import {
   shouldSuppressReasoningPayload,
 } from "../../auto-reply/reply/reply-payloads.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
+import {
+  hasInteractiveReplyBlocks,
+  hasReplyChannelData,
+  hasReplyContent,
+  type InteractiveReply,
+} from "../../interactive/payload.js";
+import { resolveOutboundMediaUrls } from "../../plugin-sdk/reply-payload.js";
 
 export type NormalizedOutboundPayload = {
   text: string;
   mediaUrls: string[];
+  interactive?: InteractiveReply;
   channelData?: Record<string, unknown>;
 };
 
@@ -16,6 +24,7 @@ export type OutboundPayloadJson = {
   text: string;
   mediaUrl: string | null;
   mediaUrls?: string[];
+  interactive?: InteractiveReply;
   channelData?: Record<string, unknown>;
 };
 
@@ -88,16 +97,26 @@ export function normalizeOutboundPayloads(
 ): NormalizedOutboundPayload[] {
   const normalizedPayloads: NormalizedOutboundPayload[] = [];
   for (const payload of normalizeReplyPayloadsForDelivery(payloads)) {
-    const mediaUrls = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
+    const mediaUrls = resolveOutboundMediaUrls(payload);
+    const interactive = payload.interactive;
     const channelData = payload.channelData;
-    const hasChannelData = Boolean(channelData && Object.keys(channelData).length > 0);
+    const hasChannelData = hasReplyChannelData(channelData);
+    const hasInteractive = hasInteractiveReplyBlocks(interactive);
     const text = payload.text ?? "";
-    if (!text && mediaUrls.length === 0 && !hasChannelData) {
+    if (
+      !hasReplyContent({
+        text,
+        mediaUrls,
+        interactive,
+        hasChannelData,
+      })
+    ) {
       continue;
     }
     normalizedPayloads.push({
       text,
       mediaUrls,
+      ...(hasInteractive ? { interactive } : {}),
       ...(hasChannelData ? { channelData } : {}),
     });
   }
@@ -109,10 +128,12 @@ export function normalizeOutboundPayloadsForJson(
 ): OutboundPayloadJson[] {
   const normalized: OutboundPayloadJson[] = [];
   for (const payload of normalizeReplyPayloadsForDelivery(payloads)) {
+    const mediaUrls = resolveOutboundMediaUrls(payload);
     normalized.push({
       text: payload.text ?? "",
       mediaUrl: payload.mediaUrl ?? null,
-      mediaUrls: payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : undefined),
+      mediaUrls: mediaUrls.length ? mediaUrls : undefined,
+      interactive: payload.interactive,
       channelData: payload.channelData,
     });
   }
